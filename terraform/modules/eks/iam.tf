@@ -116,7 +116,7 @@ resource "aws_iam_role_policy_attachment" "external_secrets_attach" {
 resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
+  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1", "1c58a218090b7a4c9e4baa9d0339d91544a42b15"]
 }
 
 resource "aws_iam_role" "github_actions_role" {
@@ -135,7 +135,8 @@ resource "aws_iam_role" "github_actions_role" {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*"
+          # Allows ANY repository owned by your GitHub username 'ahmeddhussain'
+          "token.actions.githubusercontent.com:sub" = "repo:ahmeddhussain/*"
         }
       }
     }]
