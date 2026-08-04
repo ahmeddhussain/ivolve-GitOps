@@ -238,23 +238,21 @@ kubectl get secret app-secret -n ivolve -o jsonpath='{.data}' | jq
 `k8s/` manifests, synced by ArgoCD into the `ivolve` namespace:
 
 * `namespace.yml` — the `ivolve` namespace.
-* `configmap.yml` — `DB_HOST` points **directly at the RDS endpoint** (a plain string, not templated from a Terraform output — see [Known Issues](#known-issues--cleanup-todos)), plus `DB_PORT`, `DB_NAME`, `DB_USER`, and the two inter-service URLs.
+* `configmap.yml` — `DB_PORT`, `DB_NAME`, `DB_USER`, and the two inter-service URLs.
 * `external-secrets.yml` — see above; produces `app-secret`.
 * `frontend-deploy-svc.yml`, `auth-deploy-svc.yml`, `roadmap-deploy-svc.yml` — one Deployment + ClusterIP Service per microservice. `auth-service` and `roadmap-service` pull both `app-config` and `app-secret` via `envFrom`; `frontend-service` only needs the ConfigMap.
 * `ingress.yml` — `frontend-ingress`, ALB, `IngressGroup: ivolve-shared-alb`, `group.order: "10"` (shares the ALB with Grafana's ingress from the monitoring stack, which uses `group.order: "1"` to take priority on its more specific `/grafana` path).
 
-**No StorageClass, no StatefulSet, no PVC** — removing the in-cluster database also removed the entire EBS CSI driver dependency that the old project needed.
 
 ### Test Results
 
-> **Screenshot needed.** The existing "Kubernetes" screenshot in this repo is reused from the old project and shows a `mysql-0` pod that has no business existing here — see [Known Issues](#known-issues--cleanup-todos). Capture a fresh:
-> ```bash
-> kubectl get pods -n ivolve
-> kubectl get svc -n ivolve
-> kubectl get ingress -n ivolve
-> ```
-> Expected: **exactly 3 pods** (`frontend-service`, `auth-service`, `roadmap-service`), all `Running`, `0` restarts — no `mysql-0`.
+```bash
+ kubectl get pods -n ivolve
+ kubectl get svc -n ivolve
+ kubectl get ingress -n ivolve
+ ```
 
+![alt text](screenshots/k8s.png)
 ---
 
 ## Continuous Integration with GitHub Actions
@@ -310,7 +308,8 @@ GitHub mints a short-lived OIDC token per run; AWS validates it against `GitHubA
 
 ### Test Results
 
-> **Screenshot needed** — capture the GitHub **Actions** tab showing all three workflows green, and the "Configure AWS Credentials" step succeeding. The existing CI-labeled screenshots in this repo are Jenkins dashboards from the old project and don't apply here.
+![alt text](screenshots/github.png)
+![alt text](screenshots/github-2.png)
 
 ---
 
