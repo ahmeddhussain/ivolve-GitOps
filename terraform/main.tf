@@ -41,6 +41,7 @@ module "secrets" {
   source      = "./modules/secrets"
   db_password = var.db_password
   jwt_secret  = var.jwt_secret
+  db_host     = module.rds.db_address
 }
 
 # Automates External Secrets Operator 

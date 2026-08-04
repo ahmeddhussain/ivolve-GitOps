@@ -4,7 +4,6 @@ metadata:
   name: app-config
   namespace: ivolve
 data:
-  DB_HOST: "ivolve-mysql-db.c83skyye8aus.us-east-1.rds.amazonaws.com"
   DB_PORT: "3306"
   DB_NAME: "ivolve"
   DB_USER: "ahmed"

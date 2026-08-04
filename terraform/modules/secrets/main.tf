@@ -9,5 +9,6 @@ resource "aws_secretsmanager_secret_version" "app_secrets_val" {
     DB_PASSWORD      = var.db_password
     DB_ROOT_PASSWORD = var.db_password
     JWT_SECRET       = var.jwt_secret
+    DB_HOST          = var.db_host
   })
 }

@@ -1,6 +1,7 @@
-# ivolve-CloudDevOpsProject
+# ivolve-GitOps
 
-End-to-end DevOps pipeline for a microservices-based web application: containerization, infrastructure provisioning, configuration management, orchestration, continuous integration, and continuous deployment — built on Docker, Terraform, Ansible, Kubernetes (EKS), Jenkins, and ArgoCD.
+An advanced, enterprise-grade DevOps platform for a microservices-based web application. This project demonstrates a 100% serverless CI and pull-based CD architecture using Docker, Terraform, Kubernetes (EKS), GitHub Actions (with AWS OIDC), ArgoCD, Amazon RDS, and AWS Secrets Manager via External Secrets Operator.
+
 
 ---
 
@@ -9,195 +10,160 @@ End-to-end DevOps pipeline for a microservices-based web application: containeri
 1. [Overview](#overview)
 2. [Quick Start](#quick-start)
 3. [Architecture](#architecture)
-4. [Repository Layout](#repository-layout)
-5. [Prerequisites](#prerequisites)
-6. [Local Development with Docker Compose](#local-development-with-docker-compose)
-7. [Infrastructure Provisioning with Terraform](#infrastructure-provisioning-with-terraform)
-8. [Configuration Management with Ansible](#configuration-management-with-ansible)
-9. [Container Orchestration with Kubernetes](#container-orchestration-with-kubernetes)
-10. [Continuous Integration with Jenkins](#continuous-integration-with-jenkins)
-11. [Continuous Deployment with ArgoCD](#continuous-deployment-with-argocd)
-12. [Monitoring with Prometheus & Grafana](#monitoring-with-prometheus--grafana)
-13. [System Verification & End-to-End Testing](#system-verification--end-to-end-testing)
-14. [Real-World Troubleshooting & Solutions](#real-world-troubleshooting--solutions)
+4. [Prerequisites](#prerequisites)
+5. [Local Development with Docker Compose](#local-development-with-docker-compose)
+6. [Infrastructure Provisioning with Terraform](#infrastructure-provisioning-with-terraform)
+7. [Secrets Management: AWS Secrets Manager + External Secrets Operator](#secrets-management-aws-secrets-manager--external-secrets-operator)
+8. [Container Orchestration with Kubernetes](#container-orchestration-with-kubernetes)
+9. [Continuous Integration with GitHub Actions](#continuous-integration-with-github-actions)
+10. [Continuous Deployment with ArgoCD](#continuous-deployment-with-argocd)
+11. [Monitoring with Prometheus & Grafana](#monitoring-with-prometheus--grafana)
+12. [System Verification & End-to-End Testing](#system-verification--end-to-end-testing)
+13. [Real-World Troubleshooting & Solutions](#real-world-troubleshooting--solutions)
+14. [Known Issues / Cleanup TODOs](#known-issues--cleanup-todos)
 15. [Screenshots Index](#screenshots-index)
-
+16. [License](#license)
 
 ---
 
 ## Overview
 
-This project is based on the source application from [`iVolveFinalProject`](https://github.com/Ibrahim-Adel15/iVolveFinalProject) and is organized as a complete DevOps pipeline around it.
+This project is organized as a complete, zero-maintenance GitOps pipeline around a 3-tier microservice application : [`iVolveFinalProject`](https://github.com/Ibrahim-Adel15/iVolveFinalProject)
 
-The application consists of three independent microservices behind a frontend, backed by MySQL:
+| Service | Technology | Responsibility | Port |
+|---|---|---|---|
+| `frontend` | Node.js / Express / EJS | Web UI | 3000 |
+| `auth-service` | Python / Flask | Signup/login, DB access | 5000 |
+| `roadmap-service` | Java / Spring Boot | Roadmap data (no DB) | 8080 |
+| Amazon RDS (MySQL 8.0) | Managed | Stores users | 3306 |
 
-| Service           | Technology               | Responsibility                          | Port |
-| ------------------ | ------------------------- | ----------------------------------------- | ---- |
-| `frontend`         | Node.js / Express / EJS   | Web UI and user interaction               | 3000 |
-| `auth-service`     | Python / Flask             | User signup and login, database access    | 5000 |
-| `roadmap-service`  | Java / Spring Boot         | Serves roadmap data (no DB dependency)    | 8080 |
-| `mysql`            | MySQL 8.0                  | Stores application users                  | 3306 |
-
-
-
-This repo delivers, for each stage of the pipeline:
-
-* Local containerized testing with Docker Compose
-* AWS infrastructure provisioning with Terraform (VPC, Jenkins EC2, EKS, ECR, S3 remote state)
-* Jenkins + SonarQube EC2 configuration with Ansible (roles, dynamic inventory, vault)
-* Kubernetes manifests deploying the app into EKS
-* A Jenkins CI pipeline per microservice (build → code scan → security scan → push → update manifests → GitOps push)
-* ArgoCD continuous deployment following GitOps
 
 ## Quick Start
- 
-The fastest path from a clean checkout to a running app in EKS. Each step links to its full section below for explanations, screenshots, and troubleshooting.
- 
+
 ```bash
-git clone https://github.com/ahmeddhussain/ivolve-CloudDevOpsProject.git
-cd ivolve-CloudDevOpsProject
+git clone https://github.com/ahmeddhussain/ivolve-GitOps.git
+cd ivolve-GitOps
 ```
- 
-**1. (Optional) Test the app locally first** — [details](#local-development-with-docker-compose)
+
+**1. (Optional) Test locally** — [details](#local-development-with-docker-compose)
 ```bash
 cd docker && docker compose up --build
-# http://localhost:3000
 ```
- 
+
 **2. Provision AWS infrastructure** — [details](#infrastructure-provisioning-with-terraform)
 ```bash
 cd terraform
 terraform init
-terraform apply --auto-approve      
+terraform apply --auto-approve
 ```
- 
-**3. Configure Jenkins + SonarQube** — [details](#configuration-management-with-ansible)
-```bash
-cd ../ansible
-# create + encrypt group_vars/all/vault.yml first — see the Ansible section
-ansible-inventory --graph
-ansible-playbook site.yml --ask-vault-pass
-```
- 
-**4. Set up Jenkins** — [details](#continuous-integration-with-jenkins)
-- Log into `http://<EC2_PUBLIC_IP>:8080`.
-- Add Global Pipeline Library `jenkins-shared-library` pointing at this repo.
-- Add credentials: `github-credentials`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `sonarqube-token`.
-- Create 3 pipeline jobs from `Jenkinsfile.frontend`, `Jenkinsfile.auth`, `Jenkinsfile.roadmap`, and build each once — this pushes images to ECR and writes the tags into `k8s/`.
 
-**5. Deploy ArgoCD** — [details](#continuous-deployment-with-argocd)
+**3. Point kubectl at the cluster**
 ```bash
 aws eks update-kubeconfig --region us-east-1 --name ivolve-eks-cluster
+kubectl get pods -n external-secrets   # confirm ESO is running (installed by Terraform)
+```
+
+**4. Deploy the app + secrets sync via ArgoCD** — [details](#continuous-deployment-with-argocd)
+```bash
 kubectl create namespace argocd
 kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-kubectl apply -f ../argocd/application.yml
-kubectl apply -f ../argocd/svc-lb.yml
+kubectl apply -f argocd/application.yml
+kubectl apply -f argocd/svc-lb.yml
 ```
- 
-**6. Verify** — [details](#system-verification--end-to-end-testing)
+
+**5. Set up GitHub Actions** — [details](#continuous-integration-with-github-actions)
+- Confirm `GitHubActionsECRRole` exists (created by Terraform) and its trust policy matches your repo.
+- Push to `main` under `docker/iVolveFinalProject/<service>/**` to trigger a pipeline — or run any workflow manually via **Actions → (workflow) → Run workflow**.
+
+**6. Verify**
 ```bash
 kubectl get pods -n ivolve
-kubectl get ingress -n ivolve   # grab the ALB address
+kubectl get ingress -n ivolve
 ```
-Open `http://<ALB_DNS_NAME>/signup` in a browser.
- 
+Open `http://<ALB_DNS_NAME>/signup`.
+
 **7. (Optional) Deploy monitoring** — [details](#monitoring-with-prometheus--grafana)
 ```bash
-kubectl apply -f argocd/monitoring-application.yml
+kubectl apply -f argocd/mointoring-app.yml
 ```
-Open `http://<ALB_DNS_NAME>/grafana` once synced.
 
 ---
 
 ## Architecture
 
-![](project-architecture.png)
- 
+### Application Flow
+```text
+Browser
+  │
+  ▼
+frontend (Node.js/Express) ──► auth-service (Flask) ──► Amazon RDS (MySQL)
+  │
+  └────────────────────────► roadmap-service (Spring Boot)
+```
+
 ### Infrastructure Overview
- 
 ```text
 Internet
   │
   ▼
 AWS VPC
-  ├── Public Subnets (2 AZs)
-  │     └── Jenkins + SonarQube EC2
-  │
-  ├── Private Subnets (2 AZs)
-  │     └── EKS Worker Nodes
-  │
-  ├── NAT Gateway, Internet Gateway
-  └── Security Groups / Network ACLs
- 
-Amazon ECR ── stores built images (frontend, auth, roadmap)
-AWS Load Balancer Controller (Helm, IRSA) ── provisions the ALB from the frontend Ingress
-Amazon EBS CSI Driver (IRSA) ── backs the MySQL StatefulSet's persistent volume
-ArgoCD ── GitOps-syncs k8s/ manifests to the EKS `ivolve` namespace
+  ├── Public Subnets (2 AZs) — NAT Gateway, Internet Gateway
+  └── Private Subnets (2 AZs)
+        ├── EKS Worker Nodes
+        └── Amazon RDS (MySQL) — security group restricted to the EKS node SG only
+
+Amazon ECR ─────────────── stores built images (frontend, auth, roadmap)
+AWS Load Balancer Controller (Helm, IRSA) ─ provisions the shared ALB from the two Ingresses
+External Secrets Operator (Helm, IRSA) ──── syncs AWS Secrets Manager → k8s Secret `app-secret`
+GitHub Actions (OIDC → GitHubActionsECRRole) ─ builds, scans, pushes images, updates k8s/ manifests
+ArgoCD ─────────────────── GitOps-syncs k8s/ (app) and the kube-prometheus-stack Helm chart (monitoring)
 ```
 
 ---
 
 ## Prerequisites
 
-* Docker and Docker Compose
-* Terraform (>= 1.10, for native S3 state locking via `use_lockfile`)
-* Helm (the `eks` module's `helm_release` resource needs the `helm` provider, which in turn talks to the cluster via your local kubeconfig — see the note in the Terraform section below)
-* AWS CLI configured with credentials that can manage VPC, EC2, EKS, ECR, IAM, and S3
+* Docker and Docker Compose (local dev only)
+* Terraform (>= 1.10)
+* Helm (used by Terraform's `helm_release` resources — no separate manual install needed for the cluster add-ons themselves)
+* AWS CLI configured with credentials that can manage VPC, EC2 networking, EKS, ECR, RDS, IAM, Secrets Manager, and S3
 * kubectl
-* Ansible (with the `amazon.aws` collection installed, for the dynamic inventory plugin)
-* A GitHub repository with credentials Jenkins can push to
-* An existing EC2 key pair (referenced by name, not by file path ) and an S3 bucket for Terraform state
+* A GitHub repository — **no server-side credentials to configure**, since CI auth is via OIDC (see the GitHub Actions section)
 
 ---
 
 ## Local Development with Docker Compose
 
-All four components are defined in [`docker/docker-compose.yaml`](./docker/docker-compose.yaml), which builds the three microservices from [`docker/iVolveFinalProject/`](./docker/iVolveFinalProject/).
-
-### Run locally
+Unchanged from the original project — RDS is AWS-only, so local dev still runs a throwaway MySQL container.
 
 ```bash
 cd docker
 docker compose up --build
 ```
 
-### What this does
+* Frontend → `http://localhost:3000`
+* Auth Service → `http://localhost:5000`
+* Roadmap Service → `http://localhost:8080`
 
-1. Builds the `frontend`, `auth-service`, and `roadmap-service` images from `docker/iVolveFinalProject/<service>/Dockerfile`.
-2. Starts MySQL first and waits for its healthcheck before starting `auth-service`.
-3. Starts `auth-service`, `roadmap-service`, and `frontend`.
-4. Exposes the services locally.
+### Verify
 
-### Local ports
-
-* Frontend: `http://localhost:3000`
-* Auth Service: `http://localhost:5000`
-* Roadmap Service: `http://localhost:8080`
-* MySQL: `localhost:3306`
-
-### Verify the application
-
-* Open the frontend in your browser and create a new account.
+* Sign up through the frontend.
 
   ![Local signup page](screenshots/image.png)
 
-* Log in with the new account and confirm the roadmap page opens.
+* Log in and confirm the roadmap page loads.
 
   ![Local roadmap page after login](screenshots/image-1.png)
 
-* Confirm the database contains the new user record:
-
+* Confirm the record actually persisted:
   ```bash
   docker exec -it mysql mysql -u ahmed -p ivolve
   ```
   ```sql
-  SHOW TABLES;
   SELECT id, username, created_at FROM users;
   ```
 
   ![Local MySQL container showing the new user record](screenshots/image-2.png)
-
-### Stop the stack
 
 ```bash
 docker compose down -v
@@ -207,25 +173,25 @@ docker compose down -v
 
 ## Infrastructure Provisioning with Terraform
 
-Terraform provisions the AWS environment for Jenkins and Kubernetes, split into four modules with an S3 backend for remote state.
-
 ### Modules
 
-**1. `network`** —> VPC, public/private subnets (2 AZs), Internet Gateway, single NAT Gateway, public/private route tables, and a Network ACL. Public and private subnets are tagged `kubernetes.io/role/elb` / `kubernetes.io/role/internal-elb` so the AWS Load Balancer Controller can auto-discover them.
+**`network`** —> VPC, 2 public + 2 private subnets across 2 AZs, IGW, single NAT Gateway, route tables, and Network ACLs.
 
-**2. `server`** —>  the Jenkins + SonarQube EC2 instance (Ubuntu 22.04, tagged `Role: Jenkins` for Ansible's dynamic inventory) and its security group (SSH 22, Jenkins 8080, SonarQube 9000).
+**`eks`** —> cluster + 2-node managed node group in the private subnets, IAM roles, OIDC provider, and every IRSA role this project needs:
+- AWS Load Balancer Controller (installed via `helm_release`, so the shared ALB gets provisioned automatically)
+- External Secrets Operator's IRSA role (the Helm release itself is installed from root `main.tf`, not this module)
+- **GitHub Actions OIDC**: a separate `aws_iam_openid_connect_provider` for `token.actions.githubusercontent.com`, plus `GitHubActionsECRRole`, trusted via a `StringLike` condition built from `var.github_repo` — see [Troubleshooting](#real-world-troubleshooting--solutions) for why this needs to be a wildcard, not an exact match.
 
-**3. `eks`** —> the EKS cluster and a 2-node managed node group spread across the private subnets/AZs, cluster and node IAM roles, an OIDC provider for IRSA, plus:
-   - an IRSA role for the **AWS Load Balancer Controller**, installed directly by Terraform via `helm_release`, so the frontend Ingress can provision a real ALB;
-   - an IRSA role for the **EBS CSI driver**, enabled as an EKS addon, so the MySQL StatefulSet's PVC can actually bind.
+**`ecr`** —> `ivolve-frontend`, `ivolve-auth`, `ivolve-roadmap` repositories.
 
-   Both avoid relying on EC2 instance metadata (IMDS) for AWS credentials, which is unreliable for pod-level AWS API access on EKS — see [Troubleshooting](#real-world-troubleshooting--solutions).
+**`rds`** —> single-AZ `db.t3.micro` MySQL instance, `publicly_accessible = false`, security group that only allows inbound 3306 from the EKS node security group (not `0.0.0.0/0`).
 
-**4. `ecr`** —> one repository each for `ivolve-frontend`, `ivolve-auth`, `ivolve-roadmap`.
+**`secrets`** —> one AWS Secrets Manager secret (`ivolve/app-secrets`) holding `DB_PASSWORD`, `DB_ROOT_PASSWORD`, `JWT_SECRET`, `DB_HOST` for pointing at the RDS. 
+`db_password` is a single root-level variable passed identically into both the `rds` and `secrets` modules, so the database and the secret it's stored under can never drift apart.
 
-**Backend** —> S3 bucket (`terraform/backend.tf`), with native S3 state locking (`use_lockfile = true`).
+**Root `main.tf`** also installs the **External Secrets Operator** directly via `helm_release` (same single-pass pattern as the ALB controller) — CRDs and controller both come up in one `terraform apply`, no separate `helm install` step.
 
-### Terraform commands
+### Commands
 
 ```bash
 cd terraform
@@ -234,364 +200,252 @@ terraform plan
 terraform apply --auto-approve
 ```
 
-> **Automatic Dependency Waiting:** Terraform calculates the resource dependency graph so that the Helm provider automatically **waits for the EKS cluster to be fully provisioned and ready** before attempting to fetch the authentication token or install Helm releases. This eliminates local `kubeconfig` dependencies and manual two-phase applies, executing the entire infrastructure in a single, 100% automated `terraform apply` run.
+> The `helm` provider in `provider.tf` is explicitly configured via `data.aws_eks_cluster_auth` against the cluster's own endpoint/CA, so both Helm releases — ALB controller and External Secrets Operator — install correctly in a single apply with no manual `aws eks update-kubeconfig` step required mid-run.
 
+### Verification
 
-### Test Results
-
-* VPC, subnets, NAT/IGW, and route tables created successfully.
-* Jenkins EC2 instance provisioned, with the Terraform state stored remotely in S3.
-
-  ![AWS Console: VPC resource map, Jenkins EC2 instance, S3 state bucket](screenshots/image-3.png)
-
-* EKS cluster active with a 2-node worker group across separate AZs, and all three ECR repositories created.
-
-  ![AWS Console: EKS cluster, node group, and ECR repositories](screenshots/image-4.png)
-
+![alt text](screenshots/aws-infra-1.png)
+![alt text](screenshots/aws-infra-2.png)
 ---
 
-## Configuration Management with Ansible
+## Secrets Management: AWS Secrets Manager + External Secrets Operator
 
-Ansible configures the Jenkins/SonarQube EC2 instance after Terraform provisions it, using modular Roles, an AWS dynamic inventory, and Ansible Vault for secrets.
 
-### What each role does
+### How it's wired
 
-* **`common`** —> installs OpenJDK 21, AWS CLI, SoanrQube CLI and base packages.
-* **`docker`** —> installs Docker Engine, adds `ubuntu` to the `docker` group.
-* **`trivy`** —> installs the Trivy CLI for image scanning.
-* **`sonarqube`** —> runs SonarQube Community in Docker on port 9000, tunes `vm.max_map_count`/`fs.file-max`, waits for the API to report `UP`, then via REST API: changes the default admin password with vault password, and generates a pipeline token.
-* **`jenkins`** —> installs Jenkins, adds `jenkins` to the `docker` group, starts the service.
-* **`jenkins-config`** —> waits for the initial admin password file, then drops a Groovy script into `init.groovy.d` that creates the admin account from Vault variables, installs the required plugins (Git, GitHub, Docker Pipeline, SonarQube Scanner, Pipeline, etc.), and marks the setup wizard complete — so Jenkins comes up fully configured with no manual wizard steps.
+1. Terraform's `secrets` module creates `ivolve/app-secrets` in Secrets Manager with `DB_PASSWORD`, `DB_ROOT_PASSWORD`, `JWT_SECRET` , `DB_HOST`.
+2. Terraform's `eks` module creates an IRSA role (`ivolve-eks-cluster-external-secrets-role`) trusted only for the `external-secrets-sa` ServiceAccount in the `ivolve` namespace, with a policy allowing `secretsmanager:GetSecretValue` / `DescribeSecret`.
+3. `k8s/external-secrets.yml` (synced by ArgoCD like everything else in `k8s/`) defines:
+   - the `external-secrets-sa` ServiceAccount, annotated with that IRSA role ARN
+   - a `SecretStore` pointing at Secrets Manager, authenticating via that ServiceAccount's token (`auth.jwt.serviceAccountRef`)
+   - an `ExternalSecret` that maps all three keys into a native Kubernetes `Secret` named `app-secret`, refreshed every hour (`refreshInterval: 1h`)
+4. `auth-service` and `roadmap-service` consume `app-secret` the exact same way they'd consume any other k8s Secret — `envFrom.secretRef` .
 
-### Dynamic Inventory & Vault
+### Verify
 
-* **`inventory/aws_ec2.yml`** uses the `amazon.aws.aws_ec2` plugin, filtered to `tag:Role: Jenkins` and `instance-state-name: running`, keyed by tags (so `site.yml` can target `hosts: tag_Role_Jenkins`).
-* **`group_vars/all/vault.yml`** is intentionally **not committed** (see `.gitignore`) — it must be created locally before running the playbook, containing at minimum:
-  ```yaml
-  vault_sonarqube_admin_password: "<12+ character password>"
-  vault_jenkins_admin_user: "<admin username>"
-  vault_jenkins_admin_password: "<admin password>"
-  ```
-  Encrypt it with `ansible-vault encrypt group_vars/all/vault.yml` before running the playbook.
+```bash
+kubectl get secretstore,externalsecret -n ivolve
+kubectl get secret app-secret -n ivolve -o jsonpath='{.data}' | jq
+```
+`SYNCED` status `True` on the `ExternalSecret`, and `app-secret` should contain the same three keys as the Secrets Manager entry (base64-encoded).
 
-### How to run
-
-* Confirm the EC2 instance is discovered:
-  ```bash
-  ansible-inventory --graph
-  ```
-  ![ansible-inventory --graph output showing the discovered Jenkins host](screenshots/image-5.png)
-
-* Run the master playbook:
-  ```bash
-  ansible-playbook site.yml --ask-vault-pass
-  ```
-  ![ansible-playbook site.yml final PLAY RECAP — 0 failed](screenshots/image-7.png)
-
-### Test Results
-
-* Java 21, Docker, and Trivy installed and verified.
-* SonarQube reachable at `http://<EC2_PUBLIC_IP>:9000` with a pipeline token generated.
-
-  ![SonarQube web UI live, no login required](screenshots/image-6.png)
-
-* Jenkins reachable at `http://<EC2_PUBLIC_IP>:8080`, already past the setup wizard with the admin account and plugins pre-configured.
-
-  ![Jenkins dashboard live with the setup wizard already completed](screenshots/image-8.png)
+![alt text](screenshots/secret.png)
 
 ---
 
 ## Container Orchestration with Kubernetes
 
-The manifests in [`k8s/`](./k8s/) deploy the application into the EKS cluster's `ivolve` namespace:
+`k8s/` manifests, synced by ArgoCD into the `ivolve` namespace:
 
-* `namespace.yml` —> the `ivolve` namespace.
-* `configmap.yml` —> non-secret config (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `AUTH_SERVICE_URL`, `ROADMAP_SERVICE_URL`).
-* `secret.yml` —> `DB_PASSWORD`, `DB_ROOT_PASSWORD`, `JWT_SECRET`.
-* `storageclass.yml` —> `ebs-sc`, backed by `kubernetes.io/aws-ebs` (gp2, `WaitForFirstConsumer`, `Retain`).
-* `db-statefulset.yml` / `db-headless-svc.yml` —> single-replica MySQL StatefulSet with a 5Gi PVC via `ebs-sc`, and its headless service (`mysql-0.mysql.ivolve.svc.cluster.local`, referenced directly by the ConfigMap's `DB_HOST`).
-* `frontend-deploy-svc.yml`, `auth-deploy-svc.yml`, `roadmap-deploy-svc.yml` —> one Deployment + ClusterIP Service per microservice, each pulling its image from ECR and wired to the ConfigMap/Secret.
-* `ingress.yml` —> `frontend-ingress`, `ingressClassName: alb`, `scheme: internet-facing`, `target-type: ip`, routing `/` to `frontend-service:80`. Provisioned by the AWS Load Balancer Controller installed in the Terraform step.
+* `namespace.yml` — the `ivolve` namespace.
+* `configmap.yml` — `DB_HOST` points **directly at the RDS endpoint** (a plain string, not templated from a Terraform output — see [Known Issues](#known-issues--cleanup-todos)), plus `DB_PORT`, `DB_NAME`, `DB_USER`, and the two inter-service URLs.
+* `external-secrets.yml` — see above; produces `app-secret`.
+* `frontend-deploy-svc.yml`, `auth-deploy-svc.yml`, `roadmap-deploy-svc.yml` — one Deployment + ClusterIP Service per microservice. `auth-service` and `roadmap-service` pull both `app-config` and `app-secret` via `envFrom`; `frontend-service` only needs the ConfigMap.
+* `ingress.yml` — `frontend-ingress`, ALB, `IngressGroup: ivolve-shared-alb`, `group.order: "10"` (shares the ALB with Grafana's ingress from the monitoring stack, which uses `group.order: "1"` to take priority on its more specific `/grafana` path).
 
-> The Ingress currently has no custom `host` rule — it's reaches via the ALB's own AWS-generated DNS name (see the Test Results below), not a custom domain.
-
-### Example kubectl commands
-
-```bash
-kubectl apply -f k8s/namespace.yml
-kubectl apply -f k8s/
-kubectl get pods -n ivolve
-kubectl get svc -n ivolve
-kubectl get ingress -n ivolve
-```
+**No StorageClass, no StatefulSet, no PVC** — removing the in-cluster database also removed the entire EBS CSI driver dependency that the old project needed.
 
 ### Test Results
 
-* All four workloads (`auth-service`, `frontend-service`, `roadmap-service`, `mysql-0`) `Running` with `0` restarts.
-* All Services resolved correctly; the MySQL StatefulSet bound its persistent volume.
-* The `frontend-ingress` received an `ADDRESS` from the AWS Load Balancer Controller.
-
-  ![kubectl get pods/svc/ingress -n ivolve — all healthy, Ingress ADDRESS populated](screenshots/image-14.png)
+> **Screenshot needed.** The existing "Kubernetes" screenshot in this repo is reused from the old project and shows a `mysql-0` pod that has no business existing here — see [Known Issues](#known-issues--cleanup-todos). Capture a fresh:
+> ```bash
+> kubectl get pods -n ivolve
+> kubectl get svc -n ivolve
+> kubectl get ingress -n ivolve
+> ```
+> Expected: **exactly 3 pods** (`frontend-service`, `auth-service`, `roadmap-service`), all `Running`, `0` restarts — no `mysql-0`.
 
 ---
 
-## Continuous Integration with Jenkins
+## Continuous Integration with GitHub Actions
 
-Each microservice has its own pipeline file at the repo root — `Jenkinsfile.frontend`, `Jenkinsfile.auth`, `Jenkinsfile.roadmap` — all built on a shared library.
+Three workflows, one per microservice, each path-filtered so only the service that actually changed rebuilds.
 
-### Pipeline Stage Flow
+### Trigger
 
-```text
-Checkout SCM
-  ↓
-Build Docker Image
-  ↓
-SonarQube Code Quality Scan
-  ↓
-Trivy Security Scan
-  ↓
-Push Image to AWS ECR
-  ↓
-Delete Image Locally (Disk Space Cleanup)
-  ↓
-Update Kubernetes Manifest Tag
-  ↓
-Push Updated Manifests to GitHub (GitOps)
+```yaml
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'docker/iVolveFinalProject/<service>/**'
+      - '.github/workflows/ci-<service>.yml'
 ```
 
-### Shared Library (`vars/`)
+### Pipeline stages (`ci-frontend.yml`, `ci-auth.yml`, `ci-roadmap.yml`)
 
-| File | Purpose |
-|---|---|
-| `buildimage.groovy` | `docker build` with a dynamic context path (e.g. `docker/iVolveFinalProject/frontend`) |
-| `sonarscan.groovy` | Runs `sonarsource/sonar-scanner-cli` in Docker against the EC2's SonarQube, with `node_modules`/binary exclusions and a JS memory cap |
-| `scanimage.groovy` | `trivy image --severity HIGH,CRITICAL` (currently `--exit-code 0`, i.e. reports but does not fail the build) |
-| `pushimage.groovy` | Logs into ECR and pushes the tagged image, via Jenkins credentials `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` |
-| `deleteimagelocally.groovy` | Removes the local and ECR-tagged images post-push |
-| `updatemanifests.groovy` | `sed`-replaces the `image:` line in the service's `k8s/*-deploy-svc.yml` |
-| `pushmanifests.groovy` | Commits and pushes the updated manifest via `github-credentials`, triggering ArgoCD |
+```text
+Checkout
+  ↓
+Configure AWS Credentials via OIDC (aws-actions/configure-aws-credentials)
+  ↓
+Log in to ECR
+  ↓
+Build Docker Image (docker/iVolveFinalProject/<service>)
+  ↓
+Trivy Scan (severity HIGH,CRITICAL — exit-code 0: reports, doesn't fail the build)
+  ↓
+Push to ECR (tagged with ${{ github.run_number }})
+  ↓
+Update k8s/<service>-deploy-svc.yml image tag (sed)
+  ↓
+Commit + push to main (GitOps trigger for ArgoCD)
+```
 
-### Setup notes
+### Authentication — no stored AWS keys at all
 
-* Each `Jenkinsfile.*` starts with `@Library('jenkins-shared-library') _` — this name must be configured under **Manage Jenkins → System → Global Pipeline Libraries** pointing at this repository (with `vars/` at its root) before any pipeline can run.
-* Configure Jenkins credentials: `github-credentials` (GitHub push), `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (ECR push), and `sonarqube-token` (the token generated by the Ansible `sonarqube` role).
-* Each `Jenkinsfile.*` runs as a separate pipeline, one per microservice, each triggered independently on commit.
+```yaml
+permissions:
+  id-token: write
+  contents: write
+
+- uses: aws-actions/configure-aws-credentials@v4
+  with:
+    role-to-assume: arn:aws:iam::<account_id>:role/GitHubActionsECRRole
+    aws-region: us-east-1
+```
+
+GitHub mints a short-lived OIDC token per run; AWS validates it against `GitHubActionsECRRole`'s trust policy and issues temporary STS credentials. No IAM user, no long-lived secret stored in GitHub — a direct improvement over the old Jenkins setup, which used static `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` Jenkins credentials.
 
 ### Test Results
 
-* All three pipelines (`frontend-pipeline`, `auth-pipeline`, `roadmap-pipeline`) green.
-
-  ![Jenkins dashboard: all three pipelines passing](screenshots/image-9.png)
-
-* SonarQube shows all three projects passing their quality gate.
-
-  ![SonarQube: ivolve-auth, ivolve-frontend, ivolve-roadmap all Passed](screenshots/image-10.png)
-
-* ECR populated with tag-indexed images per push.
-
-  ![ECR ivolve-frontend repository with multiple pushed image tags](screenshots/image-11.png)
+> **Screenshot needed** — capture the GitHub **Actions** tab showing all three workflows green, and the "Configure AWS Credentials" step succeeding. The existing CI-labeled screenshots in this repo are Jenkins dashboards from the old project and don't apply here.
 
 ---
 
 ## Continuous Deployment with ArgoCD
 
-ArgoCD runs inside the EKS cluster and handles Continuous Deployment via GitOps.
+Unchanged in principle from the Jenkins-based project — still `automated` sync with `prune: true` / `selfHeal: true` — just pointed at this repo.
 
-### GitOps Workflow
-
-1. **Jenkins (CI)** pushes updated image tags into `k8s/` on GitHub.
-2. **ArgoCD (CD)** polls the repository for changes under the `k8s/` path.
-3. ArgoCD applies changes to the `ivolve` namespace in EKS.
-4. ArgoCD enforces **self-healing** and **pruning**, keeping cluster state in sync with Git.
-
-### ArgoCD Application ([`argocd/application.yml`](./argocd/application.yml))
-
-* **Repository:** `https://github.com/ahmeddhussain/ivolve-CloudDevOpsProject.git`
+### `argocd/application.yml`
+* **Repository:** `https://github.com/ahmeddhussain/ivolve-GitOps.git`
 * **Path:** `k8s/`
 * **Destination namespace:** `ivolve`
-* **Sync policy:** `automated`, `prune: true`, `selfHeal: true`, `CreateNamespace=true`
 
-### Setup steps
+### Setup
 
 ```bash
-# 1. Point kubectl at the cluster
 aws eks update-kubeconfig --region us-east-1 --name ivolve-eks-cluster
-
-# 2. Install the ArgoCD controller
 kubectl create namespace argocd
 kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-
-# 3. Deploy the Application and expose the ArgoCD UI externally
 kubectl apply -f argocd/application.yml
 kubectl apply -f argocd/svc-lb.yml
 
-# 4. Verify
-kubectl get pods -n ivolve
-kubectl get svc -n ivolve
-kubectl get ingress -n ivolve
-
-# 5. Get the initial admin password and the UI's EXTERNAL-IP
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d; echo
 kubectl get svc argocd-server -n argocd
 ```
 
-Log into the ArgoCD UI at the `EXTERNAL-IP` with user `admin` and the password from step 5.
-
 ### Test Results
 
-* ArgoCD shows the `ivolve-microservices` & `ivolve-mointoring` Applications as **Healthy** and **Synced**, with the full resource tree (Deployments, ReplicaSets, Pods, the MySQL StatefulSet + PVC, and the frontend Ingress) all green.
-
-  ![ArgoCD Application: Healthy, Synced, full resource tree](screenshots/image-12.png)
-  ![alt text](screenshots/image-21.png)
+> **Screenshot needed** for the `ivolve-microservices` Application specifically — the existing one is reused from the old project and its resource tree includes a `mysql` StatefulSet + PVC that shouldn't exist in this architecture. Capture a fresh sync tree: should show 3 Deployments, 3 Services, the Ingress, the ExternalSecret/SecretStore, and **no StatefulSet**.
+>
+> The monitoring Application's sync tree, however, is accurate and current:
+>
+> ![ArgoCD: ivolve-monitoring Healthy + Synced resource tree](screenshots/image-21.png)
 
 ---
 
 ## Monitoring with Prometheus & Grafana
- 
-Cluster and infrastructure metrics via the `kube-prometheus-stack` Helm chart (Prometheus + Grafana + Alertmanager + node-exporter + kube-state-metrics), deployed the same GitOps way as the app itself — as an ArgoCD Application whose `source` is a Helm chart rather than a git path.
- 
-### Scope: infrastructure-only
- 
-This covers **cluster and pod-level metrics only** — node CPU/memory, pod restarts, resource usage, EKS control-plane health, and Kubernetes object state (Deployments, StatefulSets, PVCs). All of that comes from `node-exporter` and `kube-state-metrics`, both bundled in the chart and both bundled with their own `ServiceMonitor`s (`monitoring.coreos.com/v1`, installed as part of the same Helm release).
- 
-What this setup does **not** give you: application-level metrics like requests/sec, response latency, or error rate per microservice. Those only exist if the app itself exposes them (e.g. via `prom-client`, `prometheus-flask-exporter`, or Spring Actuator) — genuinely out of scope here since it requires touching the app source.
- 
-### Why it shares the ALB
- 
-Grafana shares the **same ALB** as the frontend instead of provisioning a second load balancer, via the AWS Load Balancer Controller's `IngressGroup` feature — both `k8s/ingress.yml` (frontend, `/`) and the chart's own Grafana ingress (`/grafana`) carry the annotation `alb.ingress.kubernetes.io/group.name: ivolve-shared-alb`, so the controller merges them into one ALB with two path rules. `group.order` (`10` for the frontend, `1` for Grafana) makes sure the more specific `/grafana` rule is evaluated before the frontend's catch-all `/`.
- 
-### Deploy
- 
+
+Same `kube-prometheus-stack` setup built earlier in this project's history — infra/cluster metrics only, zero application code changes, Grafana sharing the ALB with the frontend at `/grafana` via the same `IngressGroup` mechanism as the main Ingress.
+
 ```bash
-kubectl apply -f argocd/monitoring-application.yml
+kubectl apply -f argocd/mointoring-app.yml
 ```
- 
- 
-### Access Grafana
- 
+
 ```text
 http://<ALB_DNS_NAME>/grafana
 ```
- 
-Default login is `admin` / the chart's auto-generated admin password:
 ```bash
 kubectl get secret -n monitoring monitoring-grafana -o jsonpath="{.data.admin-password}" | base64 -d; echo
 ```
-![alt text](screenshots/image-17.png) 
-
-Grafana ships with pre-built dashboards for Kubernetes cluster health, node resource usage, and per-namespace/per-pod resource consumption out of the box — no extra setup needed for those.
 
 ### Test Results
 
-Go to `http://<ALB_DNS_NAME>/grafana`, log in, then Dashboards in the left sidebar. The chart ships a set of pre-built dashboards — these are the ones worth opening:
-
-- **Kubernetes / Compute Resources / Cluster:** Total CPU/memory usage across your whole 2-node cluster, as live graph
-- **Node Exporter / Nodes	Raw host-level:** metrics per EC2 node — CPU, memory, disk, network, load average
-- **Kubernetes / Compute Resources / Namespace (Pods)**:	Switch the namespace dropdown to ivolve — per-pod CPU/memory for your frontend, auth-service, roadmap-service, and mysql-0
-
-![alt text](screenshots/image-18.png) 
-![alt text](screenshots/image-19.png) 
-![alt text](screenshots/image-20.png) 
+![Grafana login via the shared ALB](screenshots/image-17.png)
+![Kubernetes / Compute Resources / Cluster dashboard](screenshots/image-18.png)
+![Node Exporter / Nodes dashboard](screenshots/image-19.png)
 
 ---
+
 ## System Verification & End-to-End Testing
-
-Full-chain verification: Frontend → backend microservices → MySQL, all running in EKS.
-
-### Step 1: Access the frontend
-
-Open the ALB's DNS name (from `kubectl get ingress -n ivolve`, or the AWS Console) in a browser:
 
 ```text
 http://<ALB_DNS_NAME>/signup
 ```
 
-![Signup page served through the AWS ALB](screenshots/image-13.png)
+1. Sign up and log in — `auth-service` writes to **RDS**, not an in-cluster pod.
+2. Roadmap page loads — `roadmap-service` responds independently of the DB.
+3. Confirm persistence directly against RDS:
+   ```bash
+   kubectl run mysql-client --rm -it --image=mysql:8.0 -n ivolve -- \
+     mysql -h <rds_endpoint> -u ahmed -p ivolve -e "SELECT id, username, created_at FROM users;"
+   ```
 
-### Step 2: Test `auth-service`
-
-* Create a test account and log in through the UI.
-* The frontend POSTs to `auth-service` (port 5000), which writes the user record into MySQL.
-
-### Step 3: Test `roadmap-service`
-
-* After login, the frontend loads the Roadmap page, calling `roadmap-service` (port 8080) for the training-topics data.
-
-![Roadmap page loaded after logging in through the ALB URL](screenshots/image-15.png)
-
-### Step 4: Verify database persistence
-
-Confirm the signup actually persisted to disk inside the `mysql-0` pod:
-
-```bash
-kubectl exec -it mysql-0 -n ivolve -- mysql -u ahmed -pahmedpass ivolve
-```
-```sql
-SHOW TABLES;
-SELECT id, username, created_at FROM users;
-```
-
-![mysql-0 pod: SELECT * FROM users showing the persisted record](screenshots/image-16.png)
+> **Screenshot needed** for all of the above — the existing System Verification screenshots point at the old project's ALB DNS name and were captured before the RDS migration.
 
 ---
 
 ## Real-World Troubleshooting & Solutions
 
-Issues actually hit while building this project, and how they were resolved.
+Issues actually hit building *this* project.
 
-### 1. Infrastructure & Terraform
+### 1. GitHub Actions OIDC — `Not authorized to perform sts:AssumeRoleWithWebIdentity`
 
-* **EC2 disk space exhaustion:** the default 8GB root volume filled up under concurrent Docker images, the JDK, and SonarQube. **Fix:** raised the root volume to 20–30GB in the `server` module, and on already-running instances ran `sudo growpart /dev/nvme0n1 1` + `sudo resize2fs` to extend the ext4 filesystem online.
+The trust policy looked correct (`StringEquals` on `aud`, `StringLike` on `sub` with a `repo:<owner>/*` wildcard) and matched what Terraform had deployed — no drift. The actual cause: GitHub now embeds **immutable numeric IDs** in the OIDC `sub` claim —
+```
+repo:ahmeddhussain@209910264/ivolve-GitOps@1322943035:ref:refs/heads/main
+```
+— instead of the classic `repo:<owner>/<repo>:ref:...`. A wildcard pattern of `repo:ahmeddhussain/*` expects a `/` immediately after the username; the real claim has `@209910264/` there instead, so the match silently fails on every run, regardless of branch. **Fix:** built the `StringLike` pattern from `var.github_repo` using `replace(var.github_repo, "/", "*")`, producing `repo:ahmeddhussain*ivolve-GitOps*` — the `*` wildcards absorb the numeric IDs wherever GitHub inserts them, without needing to hardcode the IDs themselves.
 
-### 2. Ansible & Server Configuration
+Diagnosed by decoding the actual OIDC token's claims mid-workflow (`echo "$TOKEN" | cut -d. -f2 | base64 -d | jq`) rather than guessing from the trust policy alone — the only way to see the real values IAM is evaluating against.
 
-* **SonarQube admin password policy (HTTP 400):** the REST API password-change call failed because SonarQube enforces a 12-character minimum. **Fix:** set `vault_sonarqube_admin_password` in `vault.yml` to a 12+ character value.
-* **Jenkins startup failure ("Java 17 older than required Java 21"):** recent Jenkins releases require Java 21+. **Fix:** the `common` role installs `openjdk-21-jdk`.
+### 2. `kube-prometheus-stack` sync stuck — `metadata.annotations: Too long: may not be more than 262144 bytes`
 
-### 3. Jenkins CI & Shared Libraries
+ArgoCD's default client-side `kubectl apply` stores the full manifest in a `last-applied-configuration` annotation; this chart's CRDs (`Prometheus`, `Alertmanager`, etc.) have OpenAPI schemas large enough to exceed Kubernetes' 256KiB annotation limit, so the CRDs never actually applied — cascading into `no matches for kind "Prometheus"` for everything depending on them. **Fix:** added `ServerSideApply=true` to the monitoring Application's `syncOptions`, which applies without that annotation entirely.
 
-* **Docker build context ("path not found"):** the microservices live in a subdirectory (`docker/iVolveFinalProject/<service>`) cloned from a separate upstream repo. **Fix:** each `Jenkinsfile.*` passes that relative path explicitly to `buildimage(...)`, and the source app was merged into this repo under `docker/iVolveFinalProject/`.
-* **SonarScanner memory freeze:** the JS sensor froze trying to analyze binary `.png`s and `node_modules`. **Fix:** `sonarscan.groovy` runs the scanner in Docker with `-Dsonar.javascript.node.maxspace=512` and excludes `**/node_modules/**,**/*.png,**/*.jpg`.
+### 3. Prometheus/Alertmanager pods never appeared, even after the CRD fix
 
-### 4. Kubernetes & ArgoCD GitOps
+Once the CRDs did apply, the `Prometheus` and `Alertmanager` custom resources were created — but their StatefulSets never followed, and `kubectl describe prometheus` showed `Events: <none>`. Root cause was in the **Operator's own startup log**, not the CR: the Operator does a one-time CRD-discovery check on boot, and it had booted (during the earlier CRD failure) *before* the CRDs existed — logging `resource "prometheuses" ... not installed in the cluster` and never registering a watch for that type. It kept running afterward, permanently blind to a CRD it never re-checked for. **Fix:** `kubectl rollout restart deployment -n monitoring monitoring-kube-prometheus-operator` — a fresh boot re-ran discovery against the now-existing CRDs.
 
-* **PVC stuck `Pending` (EBS CSI auth failure):** the EBS CSI controller pods were `CrashLoopBackOff` with `no EC2 IMDS role found` — IMDS isn't a reliable credential source for pod-level AWS API access on EKS. **Fix:** a dedicated IRSA role with `AmazonEBSCSIDriverPolicy`, bound via `service_account_role_arn` on the `aws_eks_addon.ebs_csi` resource.
-* **Ingress `ADDRESS` pending:** no AWS Load Balancer Controller was installed, so nothing could provision an ALB for `ingressClassName: alb`. **Fix:** installed the controller via Helm (now done directly by Terraform) with its own IRSA role.
-* **ALB Controller `CrashLoopBackOff` (IMDS timeout):** `failed to get VPC ID from instance metadata` / `failed to introspect region from EC2Metadata` — same root cause as the EBS CSI issue. **Fix:** passed `vpcId` and `region` explicitly to the Helm release instead of relying on IMDS auto-discovery, and bound the controller's ServiceAccount to its IRSA role via the `eks.amazonaws.com/role-arn` annotation.
+### 4. ALB Controller `CrashLoopBackOff` (IMDS timeout)
 
+Same root cause as in the original project — `failed to get VPC ID from instance metadata`. **Fix:** passed `vpcId` and `region` explicitly to the Helm release instead of relying on IMDS auto-discovery.
+
+---
+
+## Known Issues / Cleanup TODOs
+
+Honest list, not swept into the sections above:
+
+- **Leftover `mysql-0` pod/StatefulSet in `ivolve`** — no `db-statefulset.yml` exists in `k8s/` (confirmed), so this isn't managed by ArgoCD; it's a manual artifact from before the RDS migration that was never deleted. Confirm with `kubectl get statefulset,pvc -n ivolve` and remove it — it costs EBS money and contradicts the whole point of migrating to RDS.
+- **`configmap.yml`'s `DB_HOST` is a hardcoded RDS endpoint string**, not sourced from `terraform output rds_endpoint`. Fine until the RDS instance is ever destroyed/recreated, at which point the endpoint changes and this goes stale silently.
+- **`ci-frontend.yml` still has the "Debug OIDC token claims" step** left in from diagnosing issue #1 above. Harmless (it only echoes non-secret claims to the log), but worth removing now that the fix is confirmed working, or gating behind `workflow_dispatch` input so it doesn't run on every push.
+- **The `network` module's NACL allows all traffic both directions** (`0.0.0.0/0`) rather than per-port rules. Fine for a training account, worth tightening if this is ever a template for something more production-like.
+- **`argocd/mointoring-app.yml` has a typo in the filename** (kept as-is here since it's what's actually deployed and referenced — renaming it means updating whatever deploy docs/scripts reference the exact path).
+- Most screenshots in this repo predate this architecture — see the Screenshots Index below for exactly which sections still need fresh evidence.
 
 ---
 
 ## Screenshots Index
 
-Quick reference for every file in [`screenshots/`](./screenshots/) and where it's used above.
-
-| File | Shows | Used in |
+| File | Shows | Accurate for this project? |
 |---|---|---|
-| `image.png` | Local signup page (`localhost:3000`) | Docker Compose |
-| `image-1.png` | Local roadmap page after login | Docker Compose |
-| `image-2.png` | Local MySQL container, `SELECT * FROM users` | Docker Compose |
-| `image-3.png` | AWS Console: VPC resource map, Jenkins EC2, S3 state bucket | Terraform |
-| `image-4.png` | AWS Console: EKS cluster, node group, ECR repositories | Terraform |
-| `image-5.png` | `ansible-inventory --graph` | Ansible |
-| `image-6.png` | SonarQube web UI, live | Ansible |
-| `image-7.png` | `ansible-playbook site.yml` PLAY RECAP | Ansible |
-| `image-8.png` | Jenkins dashboard, live | Ansible |
-| `image-9.png` | Jenkins: all 3 pipelines green | Jenkins CI |
-| `image-10.png` | SonarQube: all 3 projects passed | Jenkins CI |
-| `image-11.png` | ECR `ivolve-frontend`, tagged images | Jenkins CI |
-| `image-12.png` | ArgoCD: `ivolve-microservices` Healthy + Synced resource tree | ArgoCD |
-| `image-13.png` | Signup page via ALB DNS name | System Verification |
-| `image-14.png` | `kubectl get pods/svc/ingress -n ivolve` | Kubernetes |
-| `image-15.png` | Roadmap page via ALB DNS name | System Verification |
-| `image-16.png` | `mysql-0` pod, persisted user record | System Verification |
-| `image-17.png` | Grafana login screen | Mointoring |
-| `image-18.png` | Grafana Kubernetes / Compute Resources / Cluster Dashboard | Mointoring |
-| `image-19.png` | Grafana Node Exporter / Nodes Dashboard | Mointoring |
-| `image-20.png` | Grafana Kubernetes / Compute Resources / Computing Dashboard | Mointoring |
-| `image-21.png` | ArgoCD: `ivolve-mointoring` Healthy + Synced resource tree | ArgoCD |
+| `image.png` | Local signup page | ✅ Yes |
+| `image-1.png` | Local roadmap page after login | ✅ Yes |
+| `image-2.png` | Local MySQL container, `SELECT * FROM users` | ✅ Yes |
+| `image-3.png` – `image-16.png` | Jenkins EC2, Ansible playbook runs, SonarQube, Jenkins pipelines, an old `mysql-0` StatefulSet, an old ALB hostname | ❌ Reused from the prior Jenkins-based project — none of this infrastructure exists here |
+| `image-17.png` | Grafana login via the shared ALB | ✅ Yes |
+| `image-18.png` | Grafana: Kubernetes / Compute Resources / Cluster | ✅ Yes |
+| `image-19.png` | Grafana: Node Exporter / Nodes | ✅ Yes |
+| `image-20.png` | Grafana: Workload dashboard, `ivolve` namespace | ⚠️ Accurate capture, but reveals the leftover `mysql-0` pod — see Known Issues |
+| `image-21.png` | ArgoCD: `ivolve-monitoring` Healthy + Synced | ✅ Yes |
 
-
+Sections still needing real screenshots: **Terraform** (VPC/EKS/RDS/Secrets Manager consoles), **Secrets Management** (ExternalSecret sync status), **Kubernetes** (fresh `kubectl get pods/svc/ingress`), **GitHub Actions CI** (Actions tab, all 3 workflows green), **ArgoCD** (`ivolve-microservices` resource tree, post-cleanup), **System Verification** (signup/roadmap against the current ALB, RDS query proof).
 
 ---
 
+## License
+
+This project is for educational and training purposes.
