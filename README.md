@@ -20,9 +20,7 @@ An advanced, enterprise-grade DevOps platform for a microservices-based web appl
 11. [Monitoring with Prometheus & Grafana](#monitoring-with-prometheus--grafana)
 12. [System Verification & End-to-End Testing](#system-verification--end-to-end-testing)
 13. [Real-World Troubleshooting & Solutions](#real-world-troubleshooting--solutions)
-14. [Known Issues / Cleanup TODOs](#known-issues--cleanup-todos)
-15. [Screenshots Index](#screenshots-index)
-16. [License](#license)
+14. [Screenshots Index](#screenshots-index)
 
 ---
 
@@ -91,33 +89,13 @@ kubectl apply -f argocd/mointoring-app.yml
 
 ## Architecture
 
-### Application Flow
-```text
-Browser
-  │
-  ▼
-frontend (Node.js/Express) ──► auth-service (Flask) ──► Amazon RDS (MySQL)
-  │
-  └────────────────────────► roadmap-service (Spring Boot)
-```
-
 ### Infrastructure Overview
-```text
-Internet
-  │
-  ▼
-AWS VPC
-  ├── Public Subnets (2 AZs) — NAT Gateway, Internet Gateway
-  └── Private Subnets (2 AZs)
-        ├── EKS Worker Nodes
-        └── Amazon RDS (MySQL) — security group restricted to the EKS node SG only
 
-Amazon ECR ─────────────── stores built images (frontend, auth, roadmap)
-AWS Load Balancer Controller (Helm, IRSA) ─ provisions the shared ALB from the two Ingresses
-External Secrets Operator (Helm, IRSA) ──── syncs AWS Secrets Manager → k8s Secret `app-secret`
-GitHub Actions (OIDC → GitHubActionsECRRole) ─ builds, scans, pushes images, updates k8s/ manifests
-ArgoCD ─────────────────── GitOps-syncs k8s/ (app) and the kube-prometheus-stack Helm chart (monitoring)
-```
+![alt text](screenshots/Diagram-2.drawio.svg)
+
+### Application Flow
+
+![alt text](screenshots/graph.drawio.svg)
 
 ---
 
@@ -257,9 +235,12 @@ kubectl get secret app-secret -n ivolve -o jsonpath='{.data}' | jq
 
 ## Continuous Integration with GitHub Actions
 
-Three workflows, one per microservice, each path-filtered so only the service that actually changed rebuilds.
+Serverless, event-driven CI is handled by three individual GitHub Actions workflows, one per microservice, providing zero-maintenance, instant scaling, and enhanced security.
+
 
 ### Trigger
+
+Workflows are strictly path-filtered. The CI process only consumes build minutes if the specific microservice's source code or its workflow file actually changes.
 
 ```yaml
 on:
@@ -293,6 +274,9 @@ Commit + push to main (GitOps trigger for ArgoCD)
 
 ### Authentication — no stored AWS keys at all
 
+This architecture completely eliminates static, long-lived AWS IAM Access Keys. GitHub Actions dynamically requests temporary STS credentials directly from AWS via OpenID Connect (OIDC).
+
+
 ```yaml
 permissions:
   id-token: write
@@ -304,7 +288,9 @@ permissions:
     aws-region: us-east-1
 ```
 
-GitHub mints a short-lived OIDC token per run; AWS validates it against `GitHubActionsECRRole`'s trust policy and issues temporary STS credentials. No IAM user, no long-lived secret stored in GitHub — a direct improvement over the old Jenkins setup, which used static `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` Jenkins credentials.
+- The AWS trust policy validates the `token.actions.githubusercontent.com:repository` claim to ensure only this specific repository can assume the role.
+- Because a monorepo structure allows multiple CI pipelines to finish and push at the exact same millisecond, concurrent git push attempts to the main branch can fail with non-fast-forward rejections.This is solved using a retry-and-rebase loop in the final GitOps push step, ensuring all concurrent manifest updates queue and merge cleanly without failing the build.
+
 
 ### Test Results
 
@@ -315,7 +301,7 @@ GitHub mints a short-lived OIDC token per run; AWS validates it against `GitHubA
 
 ## Continuous Deployment with ArgoCD
 
-Unchanged in principle from the Jenkins-based project — still `automated` sync with `prune: true` / `selfHeal: true` — just pointed at this repo.
+ Deployed in the EKS cluster for GitOps `automated` sync with `prune: true` / `selfHeal: true` — just pointed at this repo.
 
 ### `argocd/application.yml`
 * **Repository:** `https://github.com/ahmeddhussain/ivolve-GitOps.git`
@@ -337,34 +323,53 @@ kubectl get svc argocd-server -n argocd
 
 ### Test Results
 
-> **Screenshot needed** for the `ivolve-microservices` Application specifically — the existing one is reused from the old project and its resource tree includes a `mysql` StatefulSet + PVC that shouldn't exist in this architecture. Capture a fresh sync tree: should show 3 Deployments, 3 Services, the Ingress, the ExternalSecret/SecretStore, and **no StatefulSet**.
->
-> The monitoring Application's sync tree, however, is accurate and current:
->
-> ![ArgoCD: ivolve-monitoring Healthy + Synced resource tree](screenshots/image-21.png)
+![alt text](screenshots/argocd.png)
 
 ---
 
 ## Monitoring with Prometheus & Grafana
 
-Same `kube-prometheus-stack` setup built earlier in this project's history — infra/cluster metrics only, zero application code changes, Grafana sharing the ALB with the frontend at `/grafana` via the same `IngressGroup` mechanism as the main Ingress.
+Cluster and infrastructure metrics via the `kube-prometheus-stack` Helm chart (Prometheus + Grafana + Alertmanager + node-exporter + kube-state-metrics), deployed the same GitOps way as the app itself — as an ArgoCD Application whose `source` is a Helm chart rather than a git path.
+ 
+### Scope: infrastructure-only
+ 
+This covers **cluster and pod-level metrics only** — node CPU/memory, pod restarts, resource usage, EKS control-plane health, and Kubernetes object state (Deployments, StatefulSets, PVCs). All of that comes from `node-exporter` and `kube-state-metrics`, both bundled in the chart and both bundled with their own `ServiceMonitor`s (`monitoring.coreos.com/v1`, installed as part of the same Helm release).
+ 
+What this setup does **not** give you: application-level metrics like requests/sec, response latency, or error rate per microservice. Those only exist if the app itself exposes them (e.g. via `prom-client`, `prometheus-flask-exporter`, or Spring Actuator) — genuinely out of scope here since it requires touching the app source.
+ 
+### Why it shares the ALB
+ 
+Grafana shares the **same ALB** as the frontend instead of provisioning a second load balancer, via the AWS Load Balancer Controller's `IngressGroup` feature — both `k8s/ingress.yml` (frontend, `/`) and the chart's own Grafana ingress (`/grafana`) carry the annotation `alb.ingress.kubernetes.io/group.name: ivolve-shared-alb`, so the controller merges them into one ALB with two path rules. `group.order` (`10` for the frontend, `1` for Grafana) makes sure the more specific `/grafana` rule is evaluated before the frontend's catch-all `/`.
+
+### Deploy:
 
 ```bash
 kubectl apply -f argocd/mointoring-app.yml
 ```
 
+### Access Grafana
+ 
 ```text
 http://<ALB_DNS_NAME>/grafana
 ```
+ 
+Default login is `admin` / the chart's auto-generated admin password:
 ```bash
 kubectl get secret -n monitoring monitoring-grafana -o jsonpath="{.data.admin-password}" | base64 -d; echo
 ```
+![alt text](screenshots/image-17.png) 
+
+Grafana ships with pre-built dashboards for Kubernetes cluster health, node resource usage, and per-namespace/per-pod resource consumption out of the box — no extra setup needed for those.
 
 ### Test Results
 
-![Grafana login via the shared ALB](screenshots/image-17.png)
-![Kubernetes / Compute Resources / Cluster dashboard](screenshots/image-18.png)
-![Node Exporter / Nodes dashboard](screenshots/image-19.png)
+Go to `http://<ALB_DNS_NAME>/grafana`, log in, then Dashboards in the left sidebar. The chart ships a set of pre-built dashboards — these are the ones worth opening:
+
+- **Kubernetes / Compute Resources / Cluster:** Total CPU/memory usage across your whole 2-node cluster, as live graph
+- **Node Exporter / Nodes	Raw host-level:** metrics per  node — CPU, memory, disk, network, load average
+
+![Kubernetes / Compute Resources / Cluster dashboard](screenshots/grafana-1.png)
+![Node Exporter / Nodes dashboard](screenshots/grafana-2.png)
 
 ---
 
@@ -382,69 +387,75 @@ http://<ALB_DNS_NAME>/signup
      mysql -h <rds_endpoint> -u ahmed -p ivolve -e "SELECT id, username, created_at FROM users;"
    ```
 
-> **Screenshot needed** for all of the above — the existing System Verification screenshots point at the old project's ALB DNS name and were captured before the RDS migration.
+![alt text](screenshots/test-1.png)
+![alt text](screenshots/test-2.png)
+![alt text](screenshots/test-3.png)
 
 ---
 
 ## Real-World Troubleshooting & Solutions
 
-Issues actually hit building *this* project.
+This section documents the actual technical bugs encountered during the platform build, how they were diagnosed, and the permanent architectural fixes applied.
 
 ### 1. GitHub Actions OIDC — `Not authorized to perform sts:AssumeRoleWithWebIdentity`
 
-The trust policy looked correct (`StringEquals` on `aud`, `StringLike` on `sub` with a `repo:<owner>/*` wildcard) and matched what Terraform had deployed — no drift. The actual cause: GitHub now embeds **immutable numeric IDs** in the OIDC `sub` claim —
-```
-repo:ahmeddhussain@209910264/ivolve-GitOps@1322943035:ref:refs/heads/main
-```
-— instead of the classic `repo:<owner>/<repo>:ref:...`. A wildcard pattern of `repo:ahmeddhussain/*` expects a `/` immediately after the username; the real claim has `@209910264/` there instead, so the match silently fails on every run, regardless of branch. **Fix:** built the `StringLike` pattern from `var.github_repo` using `replace(var.github_repo, "/", "*")`, producing `repo:ahmeddhussain*ivolve-GitOps*` — the `*` wildcards absorb the numeric IDs wherever GitHub inserts them, without needing to hardcode the IDs themselves.
+### 1. GitHub Actions OIDC — `Not authorized to perform sts:AssumeRoleWithWebIdentity`
 
-Diagnosed by decoding the actual OIDC token's claims mid-workflow (`echo "$TOKEN" | cut -d. -f2 | base64 -d | jq`) rather than guessing from the trust policy alone — the only way to see the real values IAM is evaluating against.
+* **Symptom:** The `aws-actions/configure-aws-credentials` step failed with `Not authorized to perform sts:AssumeRoleWithWebIdentity`, even though the IAM role and OIDC provider existed in AWS.
+* **Diagnosis:** Decoding the runtime OIDC JWT payload (`echo "$TOKEN" | cut -d. -f2 | base64 -d | jq`) revealed that GitHub embeds **immutable numeric IDs** directly inside the `sub` claim string:
+  ```json
+  "sub": "repo:ahmeddhussain@209910264/ivolve-GitOps@1322943035:ref:refs/heads/main"
+  ```
+A standard IAM wildcard condition like repo:ahmeddhussain/* expects a / immediately after the username; the runtime claim had @209910264/ instead, causing AWS IAM to silently reject the token match.
+* **Fix:** Built the `StringLike` pattern dynamically from `var.github_repo` using `replace(var.github_repo, "/", "*"), producing "repo:${replace(var.github_repo, "/", "*")}*" ` — the * wildcards absorb the numeric IDs wherever GitHub inserts them without needing to hardcode the IDs.
 
-### 2. `kube-prometheus-stack` sync stuck — `metadata.annotations: Too long: may not be more than 262144 bytes`
+### 2. ArgoCD Sync Blocked by Missing CRDs `(external-secrets.io/v1beta1)`
 
-ArgoCD's default client-side `kubectl apply` stores the full manifest in a `last-applied-configuration` annotation; this chart's CRDs (`Prometheus`, `Alertmanager`, etc.) have OpenAPI schemas large enough to exceed Kubernetes' 256KiB annotation limit, so the CRDs never actually applied — cascading into `no matches for kind "Prometheus"` for everything depending on them. **Fix:** added `ServerSideApply=true` to the monitoring Application's `syncOptions`, which applies without that annotation entirely.
+* **Symptom:** ArgoCD sync failed with `failed to discover server resources for group version external-secrets.io/v1beta1: the server could not find the requested resource`
+* **Diagnosis:** The external-secrets Helm chart defaults to `installCRDs = false` unless explicitly enabled. Consequently, Helm deployed the operator controller without registering the Custom Resource Definitions in EKS, causing ArgoCD to reject ExternalSecret manifests.
+* **Fix:** Added `set { name = "installCRDs" value = "true" }` to the Terraform `helm_release.external_secrets ` resource block and updated manifest apiVersions to `external-secrets.io/v1` to match the cluster's stable primary CRD version
 
-### 3. Prometheus/Alertmanager pods never appeared, even after the CRD fix
+### 3. `kube-prometheus-stack` sync stuck — `metadata.annotations: Too long: may not be more than 262144 bytes`
 
-Once the CRDs did apply, the `Prometheus` and `Alertmanager` custom resources were created — but their StatefulSets never followed, and `kubectl describe prometheus` showed `Events: <none>`. Root cause was in the **Operator's own startup log**, not the CR: the Operator does a one-time CRD-discovery check on boot, and it had booted (during the earlier CRD failure) *before* the CRDs existed — logging `resource "prometheuses" ... not installed in the cluster` and never registering a watch for that type. It kept running afterward, permanently blind to a CRD it never re-checked for. **Fix:** `kubectl rollout restart deployment -n monitoring monitoring-kube-prometheus-operator` — a fresh boot re-ran discovery against the now-existing CRDs.
-
-### 4. ALB Controller `CrashLoopBackOff` (IMDS timeout)
-
-Same root cause as in the original project — `failed to get VPC ID from instance metadata`. **Fix:** passed `vpcId` and `region` explicitly to the Helm release instead of relying on IMDS auto-discovery.
-
----
-
-## Known Issues / Cleanup TODOs
-
-Honest list, not swept into the sections above:
-
-- **Leftover `mysql-0` pod/StatefulSet in `ivolve`** — no `db-statefulset.yml` exists in `k8s/` (confirmed), so this isn't managed by ArgoCD; it's a manual artifact from before the RDS migration that was never deleted. Confirm with `kubectl get statefulset,pvc -n ivolve` and remove it — it costs EBS money and contradicts the whole point of migrating to RDS.
-- **`configmap.yml`'s `DB_HOST` is a hardcoded RDS endpoint string**, not sourced from `terraform output rds_endpoint`. Fine until the RDS instance is ever destroyed/recreated, at which point the endpoint changes and this goes stale silently.
-- **`ci-frontend.yml` still has the "Debug OIDC token claims" step** left in from diagnosing issue #1 above. Harmless (it only echoes non-secret claims to the log), but worth removing now that the fix is confirmed working, or gating behind `workflow_dispatch` input so it doesn't run on every push.
-- **The `network` module's NACL allows all traffic both directions** (`0.0.0.0/0`) rather than per-port rules. Fine for a training account, worth tightening if this is ever a template for something more production-like.
-- **`argocd/mointoring-app.yml` has a typo in the filename** (kept as-is here since it's what's actually deployed and referenced — renaming it means updating whatever deploy docs/scripts reference the exact path).
-- Most screenshots in this repo predate this architecture — see the Screenshots Index below for exactly which sections still need fresh evidence.
+* **Symptom:** ArgoCD sync for the monitoring stack hung, throwing annotation size limit errors.
+* **Diagnosis:** ArgoCD's default client-side kubectl apply stores the entire manifest in the last-applied-configuration annotation. The Prometheus chart's OpenAPI schemas exceed Kubernetes' 256KiB annotation limit, preventing the CRDs from applying.
+* **Fix:**  Added `ServerSideApply=true` to the monitoring Application's syncOptions in argocd/monitoring-application.yml, which executes the apply server-side without generating client annotations.
 
 ---
+
 
 ## Screenshots Index
 
-| File | Shows | Accurate for this project? |
-|---|---|---|
-| `image.png` | Local signup page | ✅ Yes |
-| `image-1.png` | Local roadmap page after login | ✅ Yes |
-| `image-2.png` | Local MySQL container, `SELECT * FROM users` | ✅ Yes |
-| `image-3.png` – `image-16.png` | Jenkins EC2, Ansible playbook runs, SonarQube, Jenkins pipelines, an old `mysql-0` StatefulSet, an old ALB hostname | ❌ Reused from the prior Jenkins-based project — none of this infrastructure exists here |
-| `image-17.png` | Grafana login via the shared ALB | ✅ Yes |
-| `image-18.png` | Grafana: Kubernetes / Compute Resources / Cluster | ✅ Yes |
-| `image-19.png` | Grafana: Node Exporter / Nodes | ✅ Yes |
-| `image-20.png` | Grafana: Workload dashboard, `ivolve` namespace | ⚠️ Accurate capture, but reveals the leftover `mysql-0` pod — see Known Issues |
-| `image-21.png` | ArgoCD: `ivolve-monitoring` Healthy + Synced | ✅ Yes |
+Quick reference for every file in [`screenshots/`](./screenshots/) and where it's used above.
 
-Sections still needing real screenshots: **Terraform** (VPC/EKS/RDS/Secrets Manager consoles), **Secrets Management** (ExternalSecret sync status), **Kubernetes** (fresh `kubectl get pods/svc/ingress`), **GitHub Actions CI** (Actions tab, all 3 workflows green), **ArgoCD** (`ivolve-microservices` resource tree, post-cleanup), **System Verification** (signup/roadmap against the current ALB, RDS query proof).
+| File | Shows | Used in|
+|---|---|---|
+| `image` | Local signup page | Docker Compose |
+| `image-1` | Local roadmap page after login | Docker Compose |
+| `image-2` | Local MySQL container, `SELECT * FROM users` | Docker Compose |
+| `aws-infra-1` | AWS Console resources | Terraform |
+| `aws-infra-2` | AWS Console resources | Terraform |
+| `k8s` | `kubectl get pods/svc/ingress -n ivolve` | Kubernetes |
+| `github` | GitHub Actions Workflow Success | GitHub Actions |
+| `github-2` | Verify `OIDC` is working | GitHub Actions |
+| `argocd` | argocd applications `synced` and `healthy`| ArgoCD |
+| `image-17` | Grafana login via the shared ALB | Mointoring |
+| `grafana-1` | Grafana Kubernetes / Compute Resources / Cluster Dashboard | Mointoring |
+| `grafana-2` | Grafana Node Exporter / Nodes Dashboard | Mointoring |
+| `test-1` | `k8s-alb` opening the application via ingress | System Verification |
+| `test-2` | `auth-svc` worked and connected to `roadmap-svc` after login | System Verification |
+| `test-3` | Credentials stored in `RDS` | System Verification |
+
+
+
+
+
+
+
+
+
+
+
+
 
 ---
-
-## License
-
-This project is for educational and training purposes.
