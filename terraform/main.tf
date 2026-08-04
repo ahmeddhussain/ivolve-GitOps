@@ -50,6 +50,9 @@ resource "helm_release" "external_secrets" {
   chart            = "external-secrets"
   namespace        = "external-secrets"
   create_namespace = true
-
+  set {
+    name  = "installCRDs"
+    value = "true"
+  }
   depends_on = [module.eks]
 }

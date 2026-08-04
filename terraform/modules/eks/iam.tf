@@ -135,8 +135,8 @@ resource "aws_iam_role" "github_actions_role" {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
         StringLike = {
-          # Allows ANY repository owned by your GitHub username 'ahmeddhussain'
-          "token.actions.githubusercontent.com:sub" = "repo:ahmeddhussain/*"
+          # Satisfies AWS IAM requirement & handles GitHub's numeric IDs
+          "token.actions.githubusercontent.com:sub" = "repo:${replace(var.github_repo, "/", "*")}*"
         }
       }
     }]
