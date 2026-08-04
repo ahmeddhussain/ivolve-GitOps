@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: roadmap-service
+  namespace: ivolve
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: roadmap-service
+  template:
+    metadata:
+      labels:
+        app: roadmap-service
+    spec:
+      containers:
+      - name: roadmap-service
+        image: 800770414458.dkr.ecr.us-east-1.amazonaws.com/ivolve-roadmap:1
+        ports:
+        - containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: app-config
+        - secretRef:
+            name: app-secret
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: roadmap-service
+  namespace: ivolve
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    app: roadmap-service

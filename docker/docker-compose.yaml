@@ -1,0 +1,69 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: ivolve
+      MYSQL_USER: ahmed
+      MYSQL_PASSWORD: ahmedpass
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpass"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - ivolve-net
+
+  auth-service:
+    build: ./iVolveFinalProject/auth-service
+    container_name: auth-service
+    restart: unless-stopped
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: ahmed
+      DB_PASSWORD: ahmedpass
+      DB_NAME: ivolve
+    ports:
+      - "5000:5000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - ivolve-net
+
+  roadmap-service:
+    build: ./iVolveFinalProject/roadmap-service
+    container_name: roadmap-service
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    networks:
+      - ivolve-net
+
+  frontend:
+    build: ./iVolveFinalProject/frontend
+    container_name: frontend
+    restart: unless-stopped
+    environment:
+      AUTH_SERVICE_URL: http://auth-service:5000
+      ROADMAP_SERVICE_URL: http://roadmap-service:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - auth-service
+      - roadmap-service
+    networks:
+      - ivolve-net
+
+volumes:
+  mysql_data:
+
+networks:
+  ivolve-net:
+    driver: bridge

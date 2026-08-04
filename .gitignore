@@ -1,0 +1,10 @@
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/*.tfvars
+
+# SSH Keys & Secrets (CRITICAL)
+*.pem
+*.key
+terraform/ivolve.pem

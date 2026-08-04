@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: ivolve
+data:
+  DB_HOST: "mysql-0.mysql.ivolve.svc.cluster.local"
+  DB_PORT: "3306"
+  DB_NAME: "ivolve"
+  DB_USER: "ahmed"
+  AUTH_SERVICE_URL: "http://auth-service:5000"
+  ROADMAP_SERVICE_URL: "http://roadmap-service:8080"
+  
