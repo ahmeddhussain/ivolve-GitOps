@@ -72,6 +72,7 @@ kubectl apply -f argocd/svc-lb.yml
 **5. Set up GitHub Actions** — [details](#continuous-integration-with-github-actions)
 - Confirm `GitHubActionsECRRole` exists (created by Terraform) and its trust policy matches your repo.
 - Push to `main` under `docker/iVolveFinalProject/<service>/**` to trigger a pipeline — or run any workflow manually via **Actions → (workflow) → Run workflow**.
+- Add your `AWS_ACCOUNT_ID` as a secret in Github Secrets.
 
 **6. Verify**
 ```bash
