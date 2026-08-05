@@ -93,7 +93,9 @@ kubectl apply -f argocd/mointoring-app.yml
 
 ![alt text](screenshots/Diagram-2.drawio.svg)
 
+
 ### Application Flow
+
 
 ![alt text](screenshots/graph.drawio.svg)
 
@@ -397,7 +399,6 @@ http://<ALB_DNS_NAME>/signup
 
 This section documents the actual technical bugs encountered during the platform build, how they were diagnosed, and the permanent architectural fixes applied.
 
-### 1. GitHub Actions OIDC — `Not authorized to perform sts:AssumeRoleWithWebIdentity`
 
 ### 1. GitHub Actions OIDC — `Not authorized to perform sts:AssumeRoleWithWebIdentity`
 
