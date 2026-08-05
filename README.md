@@ -114,7 +114,7 @@ kubectl apply -f argocd/mointoring-app.yml
 
 ## Local Development with Docker Compose
 
-Unchanged from the original project — RDS is AWS-only, so local dev still runs a throwaway MySQL container.
+RDS is CLoud Native only, so local dev still runs a throwaway MySQL container.
 
 ```bash
 cd docker
@@ -207,7 +207,7 @@ terraform apply --auto-approve
 kubectl get secretstore,externalsecret -n ivolve
 kubectl get secret app-secret -n ivolve -o jsonpath='{.data}' | jq
 ```
-`SYNCED` status `True` on the `ExternalSecret`, and `app-secret` should contain the same three keys as the Secrets Manager entry (base64-encoded).
+`SYNCED` status `True` on the `ExternalSecret`, and `app-secret` should contain the same four keys as the Secrets Manager entry (base64-encoded).
 
 ![alt text](screenshots/secret.png)
 
@@ -431,6 +431,8 @@ Quick reference for every file in [`screenshots/`](./screenshots/) and where it'
 
 | File | Shows | Used in|
 |---|---|---|
+| `graph.drawio.svg` | Application flow | Architecture |
+| `Diagram-2.drawio.svg` | Infrastructure Architecture | Architecture |
 | `image` | Local signup page | Docker Compose |
 | `image-1` | Local roadmap page after login | Docker Compose |
 | `image-2` | Local MySQL container, `SELECT * FROM users` | Docker Compose |
@@ -439,7 +441,7 @@ Quick reference for every file in [`screenshots/`](./screenshots/) and where it'
 | `k8s` | `kubectl get pods/svc/ingress -n ivolve` | Kubernetes |
 | `github` | GitHub Actions Workflow Success | GitHub Actions |
 | `github-2` | Verify `OIDC` is working | GitHub Actions |
-| `argocd` | argocd applications `synced` and `healthy`| ArgoCD |
+| `argocd` | Argocd applications `synced` and `healthy`| ArgoCD |
 | `image-17` | Grafana login via the shared ALB | Mointoring |
 | `grafana-1` | Grafana Kubernetes / Compute Resources / Cluster Dashboard | Mointoring |
 | `grafana-2` | Grafana Node Exporter / Nodes Dashboard | Mointoring |
