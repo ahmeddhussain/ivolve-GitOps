@@ -293,6 +293,7 @@ permissions:
 
 - The AWS trust policy validates the `token.actions.githubusercontent.com:repository` claim to ensure only this specific repository can assume the role.
 - Because a monorepo structure allows multiple CI pipelines to finish and push at the exact same millisecond, concurrent git push attempts to the main branch can fail with non-fast-forward rejections.This is solved using a retry-and-rebase loop in the final GitOps push step, ensuring all concurrent manifest updates queue and merge cleanly without failing the build.
+- `AWS_ACCOUNT_ID` is stored as a secret in the repoistry secrets and is used by the 3 Workflows on runing the CI.
 
 
 ### Test Results
